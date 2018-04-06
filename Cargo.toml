@@ -1,0 +1,13 @@
+[package]
+name = "glib-futures"
+version = "0.1.0"
+authors = ["Sebastian Dröge <sebastian@centricular.com>"]
+
+[dependencies]
+futures-core = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
+futures-executor = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
+futures-channel = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
+futures-util = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
+glib-sys = { git = "https://github.com/gtk-rs/sys.git", features = ["v2_36"] }
+glib = { git = "https://github.com/gtk-rs/glib.git" }
+gio = { git = "https://github.com/gtk-rs/gio.git" }
