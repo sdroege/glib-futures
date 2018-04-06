@@ -1,16 +1,21 @@
+#[macro_use]
 extern crate futures_core;
 extern crate futures_executor;
+extern crate futures_util;
 
 extern crate gio;
 extern crate glib;
 extern crate glib_sys as glib_ffi;
 
 use std::mem;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use futures_core::executor::{Executor, SpawnError};
-use futures_core::task::{LocalMap, UnsafeWake, Waker};
+use futures_core::task::{Context, LocalMap, UnsafeWake, Waker};
 use futures_core::{Async, Future, Never};
+use futures_util::FutureExt;
+use futures_util::future;
 
 use glib::translate::{from_glib_none, mut_override, ToGlibPtr};
 
@@ -18,6 +23,10 @@ const INIT: usize = 0;
 const NOT_READY: usize = 1;
 const READY: usize = 2;
 const DONE: usize = 3;
+
+task_local! {
+    static MAIN_CONTEXT: Option<glib::MainContext> = None
+}
 
 #[repr(C)]
 struct FutureSource {
@@ -161,8 +170,11 @@ impl FutureSource {
                 GMainContext(ctx)
             };
 
+            let main_context = executor.0.clone();
+
             let enter = futures_executor::enter().unwrap();
             let mut context = futures_core::task::Context::new(local_map, &waker, &mut executor);
+            *MAIN_CONTEXT.get_mut(&mut context) = Some(main_context);
 
             let res = future.poll(&mut context).unwrap_or(Async::Ready(()));
 
@@ -186,14 +198,64 @@ impl Executor for GMainContext {
     }
 }
 
-extern crate futures_util;
-use futures_util::FutureExt;
-use futures_util::future;
+const TIMEOUT_INIT: usize = 0;
+const TIMEOUT_SCHEDULED: usize = 1;
+const TIMEOUT_TRIGGERED: usize = 2;
+struct TimeoutFuture {
+    value: u32,
+    state: Arc<AtomicUsize>,
+}
+
+impl TimeoutFuture {
+    fn new(value: u32) -> TimeoutFuture {
+        TimeoutFuture {
+            value,
+            state: Arc::new(AtomicUsize::new(TIMEOUT_INIT)),
+        }
+    }
+}
+
+impl Future for TimeoutFuture {
+    type Item = ();
+    type Error = Never;
+
+    fn poll(&mut self, ctx: &mut Context) -> Result<Async<()>, Never> {
+        let mut cur =
+            self.state
+                .compare_and_swap(TIMEOUT_SCHEDULED, TIMEOUT_INIT, Ordering::SeqCst);
+        if cur == TIMEOUT_INIT {
+            let waker = ctx.waker().clone();
+            let main_context = MAIN_CONTEXT.get_mut(ctx);
+            match *main_context {
+                None => unreachable!(),
+                Some(ref main_context) => {
+                    let state = self.state.clone();
+                    let t = glib::timeout_source_new(
+                        self.value,
+                        None,
+                        glib::PRIORITY_DEFAULT,
+                        move || {
+                            state.store(TIMEOUT_TRIGGERED, Ordering::SeqCst);
+                            waker.wake();
+                            glib::Continue(false)
+                        },
+                    );
+                    t.attach(Some(main_context));
+                }
+            }
+            cur = TIMEOUT_SCHEDULED;
+        }
+
+        if cur == TIMEOUT_SCHEDULED {
+            Ok(Async::Pending)
+        } else {
+            Ok(Async::Ready(()))
+        }
+    }
+}
 
 extern crate futures_channel;
 use futures_channel::oneshot;
-
-use std::sync::Mutex;
 
 fn main() {
     let mut c = GMainContext(glib::MainContext::default().unwrap());
@@ -215,14 +277,15 @@ fn main() {
         Ok(())
     }))).unwrap();
 
-    let sender = Mutex::new(Some(sender));
-    let t = glib::timeout_source_new(2000, None, glib::PRIORITY_DEFAULT, move || {
+    let mut sender = Some(sender);
+    let t = TimeoutFuture::new(2000).and_then(move |_| {
         println!("meh3");
         // Get rid of sender to let the receiver trigger
-        let _ = sender.lock().unwrap().take();
-        glib::Continue(false)
+        let _ = sender.take();
+
+        Ok(())
     });
-    t.attach(Some(&c.0));
+    c.spawn(Box::new(t)).unwrap();
 
     l.run();
 }
