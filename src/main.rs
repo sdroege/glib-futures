@@ -140,10 +140,9 @@ static SOURCE_FUNCS: glib_ffi::GSourceFuncs = glib_ffi::GSourceFuncs {
 };
 
 impl FutureSource {
-    fn new<F: Future<Item = (), Error = Never> + 'static + Send>(
-        future: F,
+    fn new(
+        future: Box<Future<Item = (), Error = Never> + 'static + Send>,
     ) -> *mut glib_ffi::GSource {
-        let future: Box<Future<Item = (), Error = Never> + 'static + Send> = Box::new(future);
         unsafe {
             let source = glib_ffi::g_source_new(
                 mut_override(&SOURCE_FUNCS),
