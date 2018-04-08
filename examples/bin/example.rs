@@ -5,17 +5,15 @@ extern crate futures_util;
 
 extern crate gio;
 extern crate glib;
-extern crate glib_sys as glib_ffi;
+
+extern crate glib_futures;
 
 use futures_channel::oneshot;
 use futures_util::future;
 use futures_util::{FutureExt, StreamExt};
 
-mod executor;
-mod sources;
-
 fn main() {
-    let mut c = executor::MainContext::default().unwrap();
+    let mut c = glib_futures::MainContext::default().unwrap();
     let l = glib::MainLoop::new(Some(&*c), false);
 
     let (sender, receiver) = oneshot::channel::<()>();
@@ -35,7 +33,7 @@ fn main() {
     }));
 
     let mut sender = Some(sender);
-    let t = sources::timeout(2000).and_then(move |_| {
+    let t = glib_futures::timeout(2000).and_then(move |_| {
         println!("meh3");
         // Get rid of sender to let the receiver trigger
         let _ = sender.take();
@@ -44,7 +42,7 @@ fn main() {
     });
     c.spawn(t);
 
-    let i = sources::interval(500)
+    let i = glib_futures::interval(500)
         .for_each(|_| {
             println!("meh4");
             Ok::<(), futures_core::Never>(())
