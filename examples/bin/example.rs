@@ -49,7 +49,7 @@ fn main() {
     let i = glib_futures::interval(500)
         .for_each(|_| {
             println!("meh4");
-            Ok::<(), futures_core::Never>(())
+            Ok(())
         })
         .map(|_| ());
     c.spawn(i);
