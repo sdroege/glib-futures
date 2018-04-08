@@ -1,3 +1,7 @@
+// Copyright (C) 2018 Sebastian Dröge <sebastian@centricular.com>
+//
+// Licensed under the MIT license, see the LICENSE file or <http://opensource.org/licenses/MIT>
+
 use futures_channel::{mpsc, oneshot};
 use futures_core::stream::Stream;
 use futures_core::task::Context;

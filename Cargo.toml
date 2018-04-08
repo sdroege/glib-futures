@@ -2,6 +2,7 @@
 name = "glib-futures"
 version = "0.1.0"
 authors = ["Sebastian Dröge <sebastian@centricular.com>"]
+LICENSE = "MIT"
 
 [dependencies]
 futures-core = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
