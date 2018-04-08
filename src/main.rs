@@ -207,6 +207,7 @@ const TIMEOUT_TRIGGERED: usize = 2;
 struct TimeoutFuture {
     value: u32,
     state: Arc<AtomicUsize>,
+    timeout_source: Option<glib::Source>,
 }
 
 impl TimeoutFuture {
@@ -214,6 +215,7 @@ impl TimeoutFuture {
         TimeoutFuture {
             value,
             state: Arc::new(AtomicUsize::new(TIMEOUT_INIT)),
+            timeout_source: None,
         }
     }
 }
@@ -245,6 +247,7 @@ impl Future for TimeoutFuture {
                             glib::Continue(false)
                         },
                     );
+                    self.timeout_source = Some(t.clone());
                     t.attach(Some(main_context));
                 }
             }
@@ -254,7 +257,18 @@ impl Future for TimeoutFuture {
         if cur == TIMEOUT_SCHEDULED {
             Ok(Async::Pending)
         } else {
+            // Get rid of the reference to the timeout source, it triggered
+            let _ = self.timeout_source.take();
             Ok(Async::Ready(()))
+        }
+    }
+}
+
+impl Drop for TimeoutFuture {
+    fn drop(&mut self) {
+        // Get rid of the timout source, we don't care anymore if it still triggers
+        if let Some(timeout_source) = self.timeout_source.take() {
+            timeout_source.destroy();
         }
     }
 }
