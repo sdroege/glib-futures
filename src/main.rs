@@ -24,10 +24,6 @@ const NOT_READY: usize = 1;
 const READY: usize = 2;
 const DONE: usize = 3;
 
-task_local! {
-    static MAIN_CONTEXT: Option<glib::MainContext> = None
-}
-
 #[repr(C)]
 struct FutureSource {
     source: glib_ffi::GSource,
@@ -169,15 +165,23 @@ impl FutureSource {
                 GMainContext(ctx)
             };
 
-            let main_context = executor.0.clone();
+            // Clone that we store in the task local data so that
+            // it can be retrieved as needed
+            executor.0.push_thread_default();
 
-            let enter = futures_executor::enter().unwrap();
-            let mut context = futures_core::task::Context::new(local_map, &waker, &mut executor);
-            *MAIN_CONTEXT.get_mut(&mut context) = Some(main_context);
+            let res = {
+                let enter = futures_executor::enter().unwrap();
+                let mut context =
+                    futures_core::task::Context::new(local_map, &waker, &mut executor);
 
-            let res = future.poll(&mut context).unwrap_or(Async::Ready(()));
+                let res = future.poll(&mut context).unwrap_or(Async::Ready(()));
 
-            drop(enter);
+                drop(enter);
+
+                res
+            };
+
+            executor.0.pop_thread_default();
             res
         } else {
             Async::Ready(())
@@ -206,7 +210,7 @@ struct TimeoutFuture {
 }
 
 impl TimeoutFuture {
-    fn new(value: u32) -> impl Future<Item=(), Error=Never> {
+    fn new(value: u32) -> impl Future<Item = (), Error = Never> {
         TimeoutFuture {
             value,
             state: Arc::new(AtomicUsize::new(TIMEOUT_INIT)),
@@ -224,10 +228,12 @@ impl Future for TimeoutFuture {
                 .compare_and_swap(TIMEOUT_SCHEDULED, TIMEOUT_INIT, Ordering::SeqCst);
         if cur == TIMEOUT_INIT {
             let waker = ctx.waker().clone();
-            let main_context = MAIN_CONTEXT.get_mut(ctx);
-            match *main_context {
+            let main_context = glib::MainContext::ref_thread_default();
+            match main_context {
                 None => unreachable!(),
                 Some(ref main_context) => {
+                    assert!(main_context.is_owner());
+
                     let state = self.state.clone();
                     let t = glib::timeout_source_new(
                         self.value,
