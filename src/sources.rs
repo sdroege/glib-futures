@@ -87,3 +87,33 @@ pub fn timeout(value: u32) -> impl Future<Item = (), Error = Never> {
         })
     })
 }
+
+pub fn timeout_seconds(value: u32) -> impl Future<Item = (), Error = Never> {
+    SourceFuture::new(move |send| {
+        let mut send = Some(send);
+        glib::timeout_source_new_seconds(value, None, glib::PRIORITY_DEFAULT, move || {
+            let _ = send.take().unwrap().send(());
+            glib::Continue(false)
+        })
+    })
+}
+
+pub fn child_watch(pid: glib::Pid) -> impl Future<Item = (glib::Pid, i32), Error = Never> {
+    SourceFuture::new(move |send| {
+        let mut send = Some(send);
+        glib::child_watch_source_new(pid, None, glib::PRIORITY_DEFAULT, move |pid, code| {
+            let _ = send.take().unwrap().send((pid, code));
+        })
+    })
+}
+
+#[cfg(any(unix, feature = "dox"))]
+pub fn unix_signal(signum: i32) -> impl Future<Item = (), Error = Never> {
+    SourceFuture::new(move |send| {
+        let mut send = Some(send);
+        glib::unix_signal_source_new(signum, None, glib::PRIORITY_DEFAULT, move || {
+            let _ = send.take().unwrap().send(());
+            glib::Continue(false)
+        })
+    })
+}
