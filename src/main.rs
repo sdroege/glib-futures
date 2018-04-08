@@ -1,4 +1,4 @@
-#[macro_use]
+extern crate futures_channel;
 extern crate futures_core;
 extern crate futures_executor;
 extern crate futures_util;
@@ -8,9 +8,9 @@ extern crate glib;
 extern crate glib_sys as glib_ffi;
 
 use std::mem;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use futures_channel::oneshot;
 use futures_core::executor::{Executor, SpawnError};
 use futures_core::task::{Context, LocalMap, UnsafeWake, Waker};
 use futures_core::{Async, Future, Never};
@@ -201,21 +201,18 @@ impl Executor for GMainContext {
     }
 }
 
-const TIMEOUT_INIT: usize = 0;
-const TIMEOUT_SCHEDULED: usize = 1;
-const TIMEOUT_TRIGGERED: usize = 2;
 struct TimeoutFuture {
     value: u32,
-    state: Arc<AtomicUsize>,
-    timeout_source: Option<glib::Source>,
+    receiver: Option<oneshot::Receiver<()>>,
+    source: Option<glib::Source>,
 }
 
 impl TimeoutFuture {
     fn new(value: u32) -> impl Future<Item = (), Error = Never> {
         TimeoutFuture {
             value,
-            state: Arc::new(AtomicUsize::new(TIMEOUT_INIT)),
-            timeout_source: None,
+            receiver: None,
+            source: None,
         }
     }
 }
@@ -225,56 +222,59 @@ impl Future for TimeoutFuture {
     type Error = Never;
 
     fn poll(&mut self, ctx: &mut Context) -> Result<Async<()>, Never> {
-        let mut cur =
-            self.state
-                .compare_and_swap(TIMEOUT_SCHEDULED, TIMEOUT_INIT, Ordering::SeqCst);
-        if cur == TIMEOUT_INIT {
-            let waker = ctx.waker().clone();
+        let TimeoutFuture {
+            ref mut receiver,
+            ref mut source,
+            ..
+        } = *self;
+
+        if receiver.is_none() {
             let main_context = glib::MainContext::ref_thread_default();
             match main_context {
                 None => unreachable!(),
                 Some(ref main_context) => {
                     assert!(main_context.is_owner());
 
-                    let state = self.state.clone();
-                    let t = glib::timeout_source_new(
+                    let (send, recv) = oneshot::channel();
+                    let mut send = Some(send);
+                    let s = glib::timeout_source_new(
                         self.value,
                         None,
                         glib::PRIORITY_DEFAULT,
                         move || {
-                            state.store(TIMEOUT_TRIGGERED, Ordering::SeqCst);
-                            waker.wake();
+                            let _ = send.take().unwrap().send(());
                             glib::Continue(false)
                         },
                     );
-                    self.timeout_source = Some(t.clone());
-                    t.attach(Some(main_context));
+                    s.attach(Some(main_context));
+                    *source = Some(s);
+                    *receiver = Some(recv);
                 }
             }
-            cur = TIMEOUT_SCHEDULED;
         }
 
-        if cur == TIMEOUT_SCHEDULED {
-            Ok(Async::Pending)
-        } else {
-            // Get rid of the reference to the timeout source, it triggered
-            let _ = self.timeout_source.take();
-            Ok(Async::Ready(()))
+        // At this point we must have a receiver
+        let receiver = receiver.as_mut().unwrap();
+        match receiver.poll(ctx) {
+            Err(_) => unreachable!(),
+            Ok(Async::Ready(v)) => {
+                // Get rid of the reference to the timeout source, it triggered
+                let _ = source.take();
+                Ok(Async::Ready(v))
+            }
+            Ok(Async::Pending) => Ok(Async::Pending),
         }
     }
 }
 
 impl Drop for TimeoutFuture {
     fn drop(&mut self) {
-        // Get rid of the timout source, we don't care anymore if it still triggers
-        if let Some(timeout_source) = self.timeout_source.take() {
-            timeout_source.destroy();
+        // Get rid of the source, we don't care anymore if it still triggers
+        if let Some(source) = self.source.take() {
+            source.destroy();
         }
     }
 }
-
-extern crate futures_channel;
-use futures_channel::oneshot;
 
 fn main() {
     let mut c = GMainContext(glib::MainContext::default().unwrap());
