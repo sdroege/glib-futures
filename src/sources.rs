@@ -65,7 +65,7 @@ where
         match res {
             Err(_) => unreachable!(),
             Ok(Async::Ready(v)) => {
-                // Get rid of the reference to the timeout source, it triggered
+                // Get rid of the reference to the source, it triggered
                 let _ = source.take();
                 Ok(Async::Ready(v))
             }
@@ -180,7 +180,7 @@ where
             Err(_) => unreachable!(),
             Ok(Async::Ready(v)) => {
                 if v.is_none() {
-                    // Get rid of the reference to the timeout source, it triggered
+                    // Get rid of the reference to the source, it triggered
                     let _ = source.take();
                 }
                 Ok(Async::Ready(v))

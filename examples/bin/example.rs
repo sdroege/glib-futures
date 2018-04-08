@@ -7,7 +7,6 @@ extern crate futures_core;
 extern crate futures_executor;
 extern crate futures_util;
 
-extern crate gio;
 extern crate glib;
 
 extern crate glib_futures;

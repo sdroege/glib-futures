@@ -24,7 +24,7 @@ const DONE: usize = 3;
 struct FutureSource {
     source: glib_ffi::GSource,
     future: Option<(
-        Box<Future<Item = (), Error = Never> + 'static + Send>,
+        Box<Future<Item = (), Error = Never> + 'static>,
         Box<LocalMap>,
     )>,
     state: AtomicUsize,
@@ -135,18 +135,24 @@ impl FutureSource {
     fn new(
         future: Box<Future<Item = (), Error = Never> + 'static + Send>,
     ) -> *mut glib_ffi::GSource {
-        unsafe {
-            let source = glib_ffi::g_source_new(
-                mut_override(&SOURCE_FUNCS),
-                mem::size_of::<FutureSource>() as u32,
-            );
-            {
-                let source = &mut *(source as *mut FutureSource);
-                source.future = Some((future, Box::new(LocalMap::new())));
-                source.state = AtomicUsize::new(INIT);
-            }
-            source
+        unsafe { Self::new_unsafe(future) }
+    }
+
+    // NOTE: This does not have the Send bound and requires to be called
+    // from the same thread where the main context is running
+    unsafe fn new_unsafe(
+        future: Box<Future<Item = (), Error = Never> + 'static>,
+    ) -> *mut glib_ffi::GSource {
+        let source = glib_ffi::g_source_new(
+            mut_override(&SOURCE_FUNCS),
+            mem::size_of::<FutureSource>() as u32,
+        );
+        {
+            let source = &mut *(source as *mut FutureSource);
+            source.future = Some((future, Box::new(LocalMap::new())));
+            source.state = AtomicUsize::new(INIT);
         }
+        source
     }
 
     fn poll(&mut self) -> Async<()> {
@@ -192,8 +198,20 @@ impl MainContext {
         glib::MainContext::default().map(MainContext)
     }
 
+    pub fn thread_default() -> Option<Self> {
+        glib::MainContext::ref_thread_default().map(MainContext)
+    }
+
     pub fn spawn<F: Future<Item = (), Error = Never> + Send + 'static>(&mut self, f: F) {
         <Self as Executor>::spawn(self, Box::new(f)).unwrap()
+    }
+
+    pub fn spawn_local<F: Future<Item = (), Error = Never> + 'static>(&mut self, f: F) {
+        assert!(self.0.is_owner());
+        unsafe {
+            let source = FutureSource::new_unsafe(Box::new(f));
+            glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
+        }
     }
 }
 
