@@ -206,7 +206,7 @@ struct TimeoutFuture {
 }
 
 impl TimeoutFuture {
-    fn new(value: u32) -> TimeoutFuture {
+    fn new(value: u32) -> impl Future<Item=(), Error=Never> {
         TimeoutFuture {
             value,
             state: Arc::new(AtomicUsize::new(TIMEOUT_INIT)),
