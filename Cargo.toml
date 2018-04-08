@@ -2,7 +2,14 @@
 name = "glib-futures"
 version = "0.1.0"
 authors = ["Sebastian Dröge <sebastian@centricular.com>"]
-LICENSE = "MIT"
+repository = "https://github.com/sdroege/glib-futures"
+license = "MIT"
+keywords = ["glib", "gio", "async", "futures"]
+categories = ["async", "api-bindings"]
+description = """
+Provides a Futures Executor around the GLib main context and various
+Futures/Streams around GLib API
+"""
 
 [dependencies]
 futures-core = { git = "https://github.com/rust-lang-nursery/futures-rs.git" }
