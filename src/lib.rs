@@ -10,8 +10,6 @@ extern crate gio;
 extern crate glib;
 extern crate glib_sys as glib_ffi;
 
-use futures_channel::oneshot;
-
 mod executor;
 pub use executor::*;
 mod sources;
