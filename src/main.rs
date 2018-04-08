@@ -8,8 +8,8 @@ extern crate glib;
 extern crate glib_sys as glib_ffi;
 
 use futures_channel::oneshot;
-use futures_util::FutureExt;
 use futures_util::future;
+use futures_util::{FutureExt, StreamExt};
 
 mod executor;
 mod sources;
@@ -43,6 +43,14 @@ fn main() {
         Ok(())
     });
     c.spawn(t);
+
+    let i = sources::interval(500)
+        .for_each(|_| {
+            println!("meh4");
+            Ok::<(), futures_core::Never>(())
+        })
+        .map(|_| ());
+    c.spawn(i);
 
     l.run();
 }

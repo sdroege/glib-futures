@@ -1,4 +1,5 @@
-use futures_channel::oneshot;
+use futures_channel::{mpsc, oneshot};
+use futures_core::stream::Stream;
 use futures_core::task::Context;
 use futures_core::{Async, Future, Never};
 
@@ -114,6 +115,106 @@ pub fn unix_signal(signum: i32) -> impl Future<Item = (), Error = Never> {
         glib::unix_signal_source_new(signum, None, glib::PRIORITY_DEFAULT, move || {
             let _ = send.take().unwrap().send(());
             glib::Continue(false)
+        })
+    })
+}
+
+pub struct SourceStream<F, T> {
+    create_source: Option<F>,
+    source: Option<(glib::Source, mpsc::UnboundedReceiver<T>)>,
+}
+
+impl<F, T> SourceStream<F, T>
+where
+    F: FnOnce(mpsc::UnboundedSender<T>) -> glib::Source + Send + 'static,
+{
+    pub fn new(create_source: F) -> impl Stream<Item = T, Error = Never> {
+        SourceStream {
+            create_source: Some(create_source),
+            source: None,
+        }
+    }
+}
+
+impl<F, T> Stream for SourceStream<F, T>
+where
+    F: FnOnce(mpsc::UnboundedSender<T>) -> glib::Source + Send + 'static,
+{
+    type Item = T;
+    type Error = Never;
+
+    fn poll_next(&mut self, ctx: &mut Context) -> Result<Async<Option<T>>, Never> {
+        let SourceStream {
+            ref mut create_source,
+            ref mut source,
+            ..
+        } = *self;
+
+        if let Some(create_source) = create_source.take() {
+            let main_context = glib::MainContext::ref_thread_default();
+            match main_context {
+                None => unreachable!(),
+                Some(ref main_context) => {
+                    assert!(main_context.is_owner());
+
+                    let (send, recv) = mpsc::unbounded();
+
+                    let s = create_source(send);
+
+                    s.attach(Some(main_context));
+                    *source = Some((s, recv));
+                }
+            }
+        }
+
+        // At this point we must have a receiver
+        let res = {
+            let (_, receiver) = source.as_mut().unwrap();
+            receiver.poll_next(ctx)
+        };
+        match res {
+            Err(_) => unreachable!(),
+            Ok(Async::Ready(v)) => {
+                if v.is_none() {
+                    // Get rid of the reference to the timeout source, it triggered
+                    let _ = source.take();
+                }
+                Ok(Async::Ready(v))
+            }
+            Ok(Async::Pending) => Ok(Async::Pending),
+        }
+    }
+}
+
+impl<T, F> Drop for SourceStream<T, F> {
+    fn drop(&mut self) {
+        // Get rid of the source, we don't care anymore if it still triggers
+        if let Some((source, _)) = self.source.take() {
+            source.destroy();
+        }
+    }
+}
+
+pub fn interval(value: u32) -> impl Stream<Item = (), Error = Never> {
+    SourceStream::new(move |send| {
+        glib::timeout_source_new(value, None, glib::PRIORITY_DEFAULT, move || {
+            if send.unbounded_send(()).is_err() {
+                glib::Continue(false)
+            } else {
+                glib::Continue(true)
+            }
+        })
+    })
+}
+
+pub fn interval_seconds(value: u32) -> impl Stream<Item = (), Error = Never> {
+    SourceStream::new(move |send| {
+        glib::timeout_source_new_seconds(value, None, glib::PRIORITY_DEFAULT, move || {
+            if send.unbounded_send(()).is_err() {
+                glib::Continue(false)
+            } else {
+                glib::Continue(true)
+            }
         })
     })
 }
