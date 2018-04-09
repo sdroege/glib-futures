@@ -33,3 +33,8 @@ path = "examples/bin/example.rs"
 name = "gio-streams"
 path = "examples/bin/gio_streams.rs"
 required-features = ["gio_api"]
+
+[[bin]]
+name = "gio-streams-block-on"
+path = "examples/bin/gio_streams_block_on.rs"
+required-features = ["gio_api"]
