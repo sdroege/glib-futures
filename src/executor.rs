@@ -10,6 +10,7 @@ use futures_core::executor::{Executor, SpawnError};
 use futures_core::task::{LocalMap, UnsafeWake, Waker};
 use futures_core::{Async, Future, Never};
 use futures_executor;
+use futures_util::future::FutureExt;
 
 use glib;
 use glib::translate::{from_glib_none, mut_override, ToGlibPtr};
@@ -138,8 +139,8 @@ impl FutureSource {
         unsafe { Self::new_unsafe(future) }
     }
 
-    // NOTE: This does not have the Send bound and requires to be called
-    // from the same thread where the main context is running
+    // NOTE: This does not have the Send bound and requires to be called from the same
+    // thread where the main context is running
     unsafe fn new_unsafe(
         future: Box<Future<Item = (), Error = Never> + 'static>,
     ) -> *mut glib_ffi::GSource {
@@ -194,6 +195,10 @@ impl FutureSource {
 pub struct MainContext(glib::MainContext);
 
 impl MainContext {
+    pub fn new() -> Self {
+        glib::MainContext::new().into()
+    }
+
     pub fn default() -> Option<Self> {
         glib::MainContext::default().map(MainContext)
     }
@@ -212,6 +217,32 @@ impl MainContext {
             let source = FutureSource::new_unsafe(Box::new(f));
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
+    }
+
+    pub fn block_on<F: Future>(&mut self, f: F) -> Result<F::Item, F::Error> {
+        let mut res = None;
+        let l = glib::MainLoop::new(Some(&self.0), false);
+        let l_clone = l.clone();
+
+        unsafe {
+            let future = f.then(|r| {
+                res = Some(r);
+                l_clone.quit();
+                Ok::<(), Never>(())
+            });
+
+            let future: *mut Future<Item = (), Error = Never> = Box::into_raw(Box::new(future));
+            // XXX: Transmute to get a 'static lifetime here, super unsafe
+            let future: *mut (Future<Item = (), Error = Never> + 'static) = mem::transmute(future);
+            let future: Box<Future<Item = (), Error = Never> + 'static> = Box::from_raw(future);
+
+            let source = FutureSource::new_unsafe(future);
+            glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
+        }
+
+        l.run();
+
+        res.unwrap()
     }
 }
 
