@@ -10,6 +10,8 @@ extern crate futures_util;
 extern crate glib;
 extern crate glib_sys as glib_ffi;
 
+extern crate send_cell;
+
 #[cfg(feature = "gio_api")]
 extern crate gio as gio_;
 

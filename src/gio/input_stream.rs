@@ -19,6 +19,7 @@ pub trait InputStreamFuture: Sized + Clone {
         &self,
         buffer: B,
     ) -> Box<Future<Item = (Self, (B, usize)), Error = (Self, (B, glib::Error))>>;
+    fn close_async_future(&self) -> Box<Future<Item = (Self, ()), Error = (Self, glib::Error)>>;
 }
 
 impl<O: glib::IsA<glib::Object> + glib::IsA<gio::InputStream> + Clone + Sized + 'static>
@@ -44,6 +45,25 @@ impl<O: glib::IsA<glib::Object> + glib::IsA<gio::InputStream> + Clone + Sized + 
                     let _ = send.take().unwrap().send(res);
                 },
             );
+
+            cancellable
+        });
+
+        Box::new(f)
+    }
+
+    fn close_async_future(&self) -> Box<Future<Item = (Self, ()), Error = (Self, glib::Error)>> {
+        let f = GioFuture::new(self, move |obj, send| {
+            let cancellable = gio::Cancellable::new();
+            let mut send = Some(send);
+            obj.close_async(glib::PRIORITY_DEFAULT, Some(&cancellable), move |res| {
+                let res = match res {
+                    Ok(()) => Ok(()),
+                    Err(e) => Err(e),
+                };
+
+                let _ = send.take().unwrap().send(res);
+            });
 
             cancellable
         });

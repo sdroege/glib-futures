@@ -7,3 +7,6 @@ pub use self::future::*;
 
 mod input_stream;
 pub use self::input_stream::*;
+
+mod file;
+pub use self::file::*;
