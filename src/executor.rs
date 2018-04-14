@@ -4,6 +4,7 @@
 
 use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread;
 
 use futures_core;
 use futures_core::executor::{Executor, SpawnError};
@@ -24,10 +25,8 @@ const DONE: usize = 3;
 #[repr(C)]
 struct TaskSource {
     source: glib_ffi::GSource,
-    future: Option<(
-        Box<Future<Item = (), Error = Never> + 'static>,
-        Box<LocalMap>,
-    )>,
+    future: Option<(Box<Future<Item = (), Error = Never>>, Box<LocalMap>)>,
+    thread: Option<thread::ThreadId>,
     state: AtomicUsize,
 }
 
@@ -151,12 +150,28 @@ impl TaskSource {
         {
             let source = &mut *(source as *mut TaskSource);
             source.future = Some((future, Box::new(LocalMap::new())));
+            source.thread = None;
             source.state = AtomicUsize::new(INIT);
         }
         source
     }
 
     fn poll(&mut self) -> Async<()> {
+        // Make sure that the first time we're polled that the current thread is remembered
+        // and from there one we ensure that we're always polled from exactly the same thread.
+        //
+        // In theory a GMainContext can be first run from one thread and later from another
+        // thread, but we allow spawning non-Send futures and must not ever use them from
+        // any other thread.
+        match &mut self.thread {
+            thread @ &mut None => {
+                *thread = Some(thread::current().id());
+            }
+            &mut Some(thread_id) => {
+                assert_eq!(thread::current().id(), thread_id);
+            }
+        }
+
         let waker = unsafe { self.clone_raw() };
         let source = &self.source as *const _;
         if let Some(ref mut future) = self.future {
@@ -215,6 +230,14 @@ impl MainContext {
         assert!(self.0.is_owner());
         unsafe {
             let source = TaskSource::new_unsafe(Box::new(f));
+
+            // Ensure that this task is never polled on another thread
+            // than this one where it was spawned now.
+            {
+                let source = &mut *(source as *mut TaskSource);
+                source.thread = Some(thread::current().id());
+            }
+
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
     }
@@ -237,6 +260,14 @@ impl MainContext {
             let future: Box<Future<Item = (), Error = Never> + 'static> = Box::from_raw(future);
 
             let source = TaskSource::new_unsafe(future);
+
+            // Ensure that this task is never polled on another thread
+            // than this one where it was spawned now.
+            {
+                let source = &mut *(source as *mut TaskSource);
+                source.thread = Some(thread::current().id());
+            }
+
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
 
