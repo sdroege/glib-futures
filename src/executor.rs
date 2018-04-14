@@ -22,7 +22,7 @@ const READY: usize = 2;
 const DONE: usize = 3;
 
 #[repr(C)]
-struct FutureSource {
+struct TaskSource {
     source: glib_ffi::GSource,
     future: Option<(
         Box<Future<Item = (), Error = Never> + 'static>,
@@ -31,9 +31,9 @@ struct FutureSource {
     state: AtomicUsize,
 }
 
-unsafe impl UnsafeWake for FutureSource {
+unsafe impl UnsafeWake for TaskSource {
     unsafe fn clone_raw(&self) -> Waker {
-        Waker::new(glib_ffi::g_source_ref(mut_override(&self.source)) as *const FutureSource)
+        Waker::new(glib_ffi::g_source_ref(mut_override(&self.source)) as *const TaskSource)
     }
 
     unsafe fn drop_raw(&self) {
@@ -53,7 +53,7 @@ unsafe extern "C" fn prepare(
     source: *mut glib_ffi::GSource,
     timeout: *mut i32,
 ) -> glib_ffi::gboolean {
-    let source = &mut *(source as *mut FutureSource);
+    let source = &mut *(source as *mut TaskSource);
 
     *timeout = -1;
 
@@ -80,7 +80,7 @@ unsafe extern "C" fn prepare(
 }
 
 unsafe extern "C" fn check(source: *mut glib_ffi::GSource) -> glib_ffi::gboolean {
-    let source = &mut *(source as *mut FutureSource);
+    let source = &mut *(source as *mut TaskSource);
 
     let cur = source.state.load(Ordering::SeqCst);
     if cur == READY || cur == DONE {
@@ -95,7 +95,7 @@ unsafe extern "C" fn dispatch(
     callback: glib_ffi::GSourceFunc,
     _user_data: glib_ffi::gpointer,
 ) -> glib_ffi::gboolean {
-    let source = &mut *(source as *mut FutureSource);
+    let source = &mut *(source as *mut TaskSource);
     assert!(callback.is_none());
 
     glib_ffi::g_source_set_ready_time(mut_override(&source.source), -1);
@@ -119,7 +119,7 @@ unsafe extern "C" fn dispatch(
 }
 
 unsafe extern "C" fn finalize(source: *mut glib_ffi::GSource) {
-    let source = source as *mut FutureSource;
+    let source = source as *mut TaskSource;
     let _ = (*source).future.take();
 }
 
@@ -132,7 +132,7 @@ static SOURCE_FUNCS: glib_ffi::GSourceFuncs = glib_ffi::GSourceFuncs {
     closure_marshal: None,
 };
 
-impl FutureSource {
+impl TaskSource {
     fn new(
         future: Box<Future<Item = (), Error = Never> + 'static + Send>,
     ) -> *mut glib_ffi::GSource {
@@ -146,10 +146,10 @@ impl FutureSource {
     ) -> *mut glib_ffi::GSource {
         let source = glib_ffi::g_source_new(
             mut_override(&SOURCE_FUNCS),
-            mem::size_of::<FutureSource>() as u32,
+            mem::size_of::<TaskSource>() as u32,
         );
         {
-            let source = &mut *(source as *mut FutureSource);
+            let source = &mut *(source as *mut TaskSource);
             source.future = Some((future, Box::new(LocalMap::new())));
             source.state = AtomicUsize::new(INIT);
         }
@@ -214,7 +214,7 @@ impl MainContext {
     pub fn spawn_local<F: Future<Item = (), Error = Never> + 'static>(&mut self, f: F) {
         assert!(self.0.is_owner());
         unsafe {
-            let source = FutureSource::new_unsafe(Box::new(f));
+            let source = TaskSource::new_unsafe(Box::new(f));
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
     }
@@ -236,7 +236,7 @@ impl MainContext {
             let future: *mut (Future<Item = (), Error = Never> + 'static) = mem::transmute(future);
             let future: Box<Future<Item = (), Error = Never> + 'static> = Box::from_raw(future);
 
-            let source = FutureSource::new_unsafe(future);
+            let source = TaskSource::new_unsafe(future);
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
 
@@ -248,7 +248,7 @@ impl MainContext {
 
 impl Executor for MainContext {
     fn spawn(&mut self, f: Box<Future<Item = (), Error = Never> + Send>) -> Result<(), SpawnError> {
-        let source = FutureSource::new(f);
+        let source = TaskSource::new(f);
         unsafe {
             glib_ffi::g_source_attach(source, self.0.to_glib_none().0);
         }
