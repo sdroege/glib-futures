@@ -47,6 +47,12 @@ where
                 Some(ref main_context) => {
                     assert!(main_context.is_owner());
 
+                    // Channel for sending back the Source result to our future here.
+                    //
+                    // In theory we could directly continue polling the
+                    // corresponding task from the Source callback,
+                    // however this would break at the very least
+                    // the g_main_current_source() API.
                     let (send, recv) = oneshot::channel();
 
                     let s = create_source(send);
@@ -161,6 +167,12 @@ where
                 Some(ref main_context) => {
                     assert!(main_context.is_owner());
 
+                    // Channel for sending back the Source result to our future here.
+                    //
+                    // In theory we could directly continue polling the
+                    // corresponding task from the Source callback,
+                    // however this would break at the very least
+                    // the g_main_current_source() API.
                     let (send, recv) = mpsc::unbounded();
 
                     let s = create_source(send);

@@ -52,6 +52,13 @@ where
                 Some(ref main_context) => {
                     assert!(main_context.is_owner());
 
+                    // Channel for sending back the GIO async operation
+                    // result to our future here.
+                    //
+                    // In theory we could directly continue polling the
+                    // corresponding task from the GIO async operation
+                    // callback, however this would break at the very
+                    // least the g_main_current_source() API.
                     let (send, recv) = oneshot::channel();
 
                     let c = schedule_operation(obj, send);
